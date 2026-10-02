@@ -1,0 +1,99 @@
+# Focused WebSockets chat demo: Laravel 12 + Reverb + a local LLM (Ollama).
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8091:80"
+    volumes:
+      - .:/var/www/html:ro
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      php:
+        condition: service_started
+      reverb:
+        condition: service_started
+
+  # The Reverb WebSocket server. Same image/code as php; php broadcasts events to
+  # it over the compose network (reverb:8080), and the browser reaches it through
+  # nginx's /app proxy. Waits for php's entrypoint to write .env before starting.
+  reverb:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/var/www/html
+    environment:
+      DB_HOST: mysql
+      DB_DATABASE: reverbchat
+      DB_USERNAME: reverbchat
+      DB_PASSWORD: secret
+    entrypoint: ["sh", "-c", "while [ ! -f /var/www/html/.env ]; do sleep 1; done; exec php artisan reverb:start --host=0.0.0.0 --port=8080"]
+    depends_on:
+      php:
+        condition: service_started
+
+  php:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/var/www/html
+      - ./docker/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro
+    environment:
+      DB_HOST: mysql
+      DB_DATABASE: reverbchat
+      DB_USERNAME: reverbchat
+      DB_PASSWORD: secret
+      APP_URL: http://localhost:8091
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_DATABASE: reverbchat
+      MYSQL_USER: reverbchat
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - dbdata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-psecret"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  # Queue worker: runs the AI-assistant reply jobs (and any other queued work).
+  # Same image/code as php; waits for php to write .env, then drains the DB queue.
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - .:/var/www/html
+    environment:
+      DB_HOST: mysql
+      DB_DATABASE: reverbchat
+      DB_USERNAME: reverbchat
+      DB_PASSWORD: secret
+    entrypoint: ["sh", "-c", "while [ ! -f /var/www/html/.env ]; do sleep 1; done; exec php artisan queue:work --sleep=1 --tries=1 --timeout=180"]
+    depends_on:
+      php:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+
+  # Local LLM server for the in-chat AI assistant. Pulls the model on first boot
+  # (cached in the named volume after) and serves it on the compose network only.
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+    entrypoint: ["/bin/sh", "-c", "ollama serve & until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull qwen2.5:0.5b; wait"]
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  dbdata:
+  ollama:
