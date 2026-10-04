@@ -2,7 +2,7 @@
 
 A small Laravel 12 app showing **real-time chat over Laravel Reverb (WebSockets)** with presence, and a **local LLM that streams its replies into the chat token by token**.
 
-**Live demo: <https://websockets-demo.9sws.com>**. No sign-in needed to try it.
+**Live demo: <https://websockets-demo.subdot.link>**. No sign-in needed to try it.
 
 ![Home](docs/screenshots/home.png)
 
